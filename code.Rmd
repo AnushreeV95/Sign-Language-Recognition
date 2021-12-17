@@ -1,9 +1,21 @@
----
-title: "Project"
-author: "Anushree Vilas Pimpalkar"
-date: "11/19/2021"
-output: pdf_document
----
+```{r}
+library("devtools")
+#install_github("davpinto/fastknn")
+library(stats)     # dependancy fulfilment for dplyr and plotly packages
+library(dplyr) 
+library(forcats)     # for "fct_reorder" function
+library(graphics)     # dependancy fulfilment for plotly package
+library(ggplot2)
+library(ggthemes)
+library(plotly)
+library(vcd)
+library(lattice)     # dependancy fulfilment for caret package
+library(caret)     # for "preProcess" function
+library(C50)    
+library(fastknn)
+library(class)
+```
+
 
 ```{r}
 train = read.csv("sign_mnist_train.csv")
@@ -138,7 +150,7 @@ test_pca = new_test[,1:101]
 
 
 ```
-
+##################################################################################################################################################################
 #DECISION TREE
 ```{r}
 set.seed(1)
@@ -163,9 +175,8 @@ rpart.fit$variable.importance
 
 ```{r}
 
-################################################################################
+
 #Tuning a Tree Model
-################################################################################
 
 #Tree tuning is essentially about when to stop splitting.
 
@@ -180,7 +191,7 @@ prunedtree = prune(rpart.fit,cp=cptarg) #prunedtree
 library(rpart.plot)
 rpart.plot(prunedtree)
 
-################################################################################
+
 
 #All boxes will be white (the box.palette argument will be ignored) because
 #the number of classes in the response 24 is greater than length(box.palette) 6.
@@ -210,59 +221,61 @@ tree_accuracy = round(accuracy(test_pca$label, rpart.prediction),4)
 print(paste("The accuracy through Decision trees is:",tree_accuracy))
 ```
 
+##Feature engineering using fastknn
 
 
+fastknn generates k * c new features, where c is the number of class labels. The new features are computed from the distances between the observations and their k nearest neighbors inside each class, as follows:
+
+First test feature contains the distances between each test instance and its nearest neighbor inside the first class.
+Second test feature contains the sums of distances between each test instance and its 2 nearest neighbors inside the first class.
+Third test feature contains the sums of distances between each test instance and its 3 nearest neighbors inside the first class.
+And so on.
+
+
+Repeat it for each class to generate the k * c new features. For the new training set, a n-fold CV approach is used to avoid overfitting.
+
+
+
+##FKNN DECISION TREES
 
 ```{r}
-library("devtools")
-#install_github("davpinto/fastknn")
-library(stats)     # dependancy fulfilment for dplyr and plotly packages
-library(dplyr) 
-library(forcats)     # for "fct_reorder" function
-library(graphics)     # dependancy fulfilment for plotly package
-library(ggplot2)
-library(ggthemes)
-library(plotly)
-library(vcd)
-library(lattice)     # dependancy fulfilment for caret package
-library(caret)     # for "preProcess" function
-library(C50)    
-library(fastknn)
-library(class)
+
+
+fknn_model = knnExtract(data.matrix(new_train[, -1]), as.factor(new_train[, 1]), data.matrix(new_test[, -1]), k = 8)
+
+dim(fknn_model$new.tr)
+dim(fknn_model$new.te)
+
+newtr = preProcess(fknn_model$new.tr, method = c("pca"))
+newtr_predicted = predict(newtr, fknn_model$new.tr)
+newtr_predicted = as.data.frame(newtr_predicted)
+newtr_predicted = cbind(label = new_train$label, newtr_predicted)
+dim(newtr_predicted)
+
+newte = preProcess(fknn_model$new.te, method = c("pca"))
+newte_predicted = predict(newtr, fknn_model$new.te)
+newte_predicted = as.data.frame(newte_predicted)
+newte_predicted = cbind(label = new_test$label, newte_predicted)
+dim(newte_predicted)
+
+
+#C5.0 Decision Trees
+
+tree_model = C5.0(x = newtr_predicted[, -1], y = as.factor(newtr_predicted[, 1]), trials = 20, control = C5.0Control(noGlobalPruning = FALSE, CF = 0.15, minCases = 3, winnow = FALSE, earlyStopping = TRUE))
+
+tree_model_predictions = predict(tree_model, newte_predicted[, -1], type = "class")
+
+table(tree_model_predictions, newte_predicted[,1])
+
+fknn_accuracy = round(accuracy(newte_predicted[,1], tree_model_predictions),4)
+print(paste("The accuracy through FKNN with k = 8 is:",fknn_accuracy))
+
 ```
 
-#KNN
 
+##################################################################################################################################################################
 ##KNN - ORIGINAL FULL DATA
-```{r}
 
-k_near = vector("numeric", 10)                          # declaration to initiate for loop
-Accuracy=vector("numeric", 10)                    # declaration to initiate for loop
-for (i in 1:10)
-  { 
-    knn.mod =  knn(train = train[,-1], test = test[,-1], cl = as.factor(train$label), k = i)
-    Accuracy[i] = 100 * (mean(test$label == knn.mod))
-    k_near[i]=i  
-    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
-}
-
-
-opt_full_k = k_near[which.max(Accuracy)]
-opt_full_k
-
-plot(k_near,(100-Accuracy),
-       xlab = "k", ylab = "Classification Error", type = "b",
-       pch = 19, col = "darkorange")
-
-
-knn_full_opt = knn(train = train[,-1], test = test[,-1], 
-                   cl = as.factor(train$label), k = opt_full_k)
-knn_full_accuracy_opt = round(accuracy(test$label, knn_full_opt),4)
-print(paste("The accuracy through KNN with optimal k is:",knn_full_accuracy_opt))
-
-
-```
-##KNN ORIGINAL FULL DATA -- CV
 ```{r}
 
 control = trainControl(method = "cv", number = 4)
@@ -292,57 +305,6 @@ knn_accuracy_full_cv = round(accuracy(Y_test, pred_knn_full_cv),4)
 print(paste("The accuracy through KNN for full model using cv is:",knn_accuracy_full_cv))
 
 ```
-
-
-
-##KNN PCA
-```{r}
-
-library(caret)
-library(class)
-
-knn.fit = knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = 8)
-summary(knn.fit)
-
-accuracy = function(actual, predicted) 
-{
-  mean(actual == predicted)
-}
-
-predicted = knn.fit
-actual = Y_test
-
-knn_accuracy = round(accuracy(test_pca$label, knn.fit),4)
-print(paste("The accuracy through KNN with k = 8 is:",knn_accuracy))
-
-
-k_near = vector("numeric", 10)                          # declaration to initiate for loop
-Accuracy=vector("numeric", 10)                    # declaration to initiate for loop
-for (i in 1:10)
-  { 
-    knn.mod =  knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = i)
-    Accuracy[i] = 100 * (mean(test_pca$label == knn.mod))
-    k_near[i]=i  
-    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
-}
-
-opt_k = k_near[which.max(Accuracy)]
-opt_k
-plot(k_near,(100-Accuracy),
-       xlab = "k", ylab = "Classification Error", type = "b",
-       pch = 19, col = "darkorange")
-
-
-```
-
-```{r}
-
-knn.fit_new = knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = opt_k)
-knn_accuracy_new = round(accuracy(Y_test, knn.fit_new),4)
-print(paste("The accuracy through KNN with optimal k is:",knn_accuracy_new))
-
-```
-
 
 ##KNN PCA DATA -- CV
 
@@ -396,85 +358,12 @@ print(paste("The accuracy through KNN with k = 8 is:",fnn_accuracy))
 
 ```
 
-##Feature engineering using fastknn
-
-
-fastknn generates k * c new features, where c is the number of class labels. The new features are computed from the distances between the observations and their k nearest neighbors inside each class, as follows:
-
-First test feature contains the distances between each test instance and its nearest neighbor inside the first class.
-Second test feature contains the sums of distances between each test instance and its 2 nearest neighbors inside the first class.
-Third test feature contains the sums of distances between each test instance and its 3 nearest neighbors inside the first class.
-And so on.
-
-
-Repeat it for each class to generate the k * c new features. For the new training set, a n-fold CV approach is used to avoid overfitting.
-
-
-
-##FKNN DECISION TREES
-
-```{r}
-
-
-fknn_model = knnExtract(data.matrix(new_train[, -1]), as.factor(new_train[, 1]), data.matrix(new_test[, -1]), k = 8)
-
-dim(fknn_model$new.tr)
-dim(fknn_model$new.te)
-
-newtr = preProcess(fknn_model$new.tr, method = c("pca"))
-newtr_predicted = predict(newtr, fknn_model$new.tr)
-newtr_predicted = as.data.frame(newtr_predicted)
-newtr_predicted = cbind(label = new_train$label, newtr_predicted)
-dim(newtr_predicted)
-
-newte = preProcess(fknn_model$new.te, method = c("pca"))
-newte_predicted = predict(newtr, fknn_model$new.te)
-newte_predicted = as.data.frame(newte_predicted)
-newte_predicted = cbind(label = new_test$label, newte_predicted)
-dim(newte_predicted)
-
-################################################################################
-#C5.0 Decision Trees
-################################################################################
-
-tree_model = C5.0(x = newtr_predicted[, -1], y = as.factor(newtr_predicted[, 1]), trials = 20, control = C5.0Control(noGlobalPruning = FALSE, CF = 0.15, minCases = 3, winnow = FALSE, earlyStopping = TRUE))
-
-tree_model_predictions = predict(tree_model, newte_predicted[, -1], type = "class")
-
-table(tree_model_predictions, newte_predicted[,1])
-
-fknn_accuracy = round(accuracy(newte_predicted[,1], tree_model_predictions),4)
-print(paste("The accuracy through FKNN with k = 8 is:",fknn_accuracy))
-
-```
-
-
+##################################################################################################################################################################
 ## SVM
 
 ```{r}
 library(e1071)
 ```
-
-```{r}
-cost = c(100,1000,10000)
-gamma = c(0.00001, 0.0001, 0.001)
-
-for (i in 1:length(cost))
-{
-  for (j in 1:length(gamma))
-  {
-    cost_0 = cost[i]
-    gamma_0 = gamma[j]
-    svm.fit_radial_original = svm(train[,-1],  as.factor(train$label), kernel="radial", cost=cost_0, gamma = gamma_0)
-    pred = predict(svm.fit_radial_original, test[,-1])
-    Accuracy = 100 * (mean(test$label == pred))
-    print(paste("cost:", cost_0))
-    print(paste("gamma:", gamma_0))
-    print(paste("Accuracy:", Accuracy))
-  }
-}
-```
-
 
 ##SVM LINEAR PCA
 ```{r}
@@ -559,7 +448,7 @@ rf_misclassication = mis
 print((rf_misclassication*100))
 ```
 
-
+##################################################################################################################################################################
 
 ## NEW APPROACH START 
 
@@ -615,6 +504,7 @@ names(test_combined)[names(test_combined) == 'test_combined_labels$label'] = 'la
 levels(train_combined_labels$label)
 levels(test_combined_labels$label)
 ```
+##################################################################################################################################################################
 
 ## KNN ON COMBINED DATA - LEVEL 1
 
@@ -693,7 +583,7 @@ for (i in 1:length(cost))
 }
 
 ```
-
+##################################################################################################################################################################
 
 ## SVM RADIAL ON COMBINED DATA ---- LEVEL 1
 
@@ -742,7 +632,7 @@ for (i in 1:length(cost))
 
 ```
 
-
+##################################################################################################################################################################
 
 ## DATA PREP FOR COMBINED LABELS SEPERATELY -- LEVEL 2
 
@@ -771,97 +661,7 @@ test_label3$label = as.factor(test_label3$label)
 
 
 ```
-
-##KNN ON COMBINED - LEVEL 2
-
-```{r}
-
-########AEMNS##########
-
-k_near = vector("numeric", 10)                          
-Accuracy=vector("numeric", 10)
-
-for (i in 1:20)
-  { 
-    knn_label1 =  knn(train = train_label1[,-1], test = test_label1[,-1], cl = as.factor(train_label1$label), k = i)
-    Accuracy[i] = 100 * (mean(test_label1$label == knn_label1))
-    k_near[i]=i  
-    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
-}
-
-opt_k_label1 = k_near[which.max(Accuracy)]
-opt_k_label1
-
-plot(k_near,(100-Accuracy),
-       xlab = "k", ylab = "Classification Error", type = "b",
-       pch = 19, col = "darkorange")
-
-
-knn_label1_opt = knn(train = train_label1[,-1], test = test_label1[,-1], 
-                   cl = as.factor(train_label1$label), k = opt_k_label1)
-knn_label1_accuracy = round(accuracy(test_label1$label, knn_label1_opt),4)
-print(paste("The accuracy through KNN with optimal k is:",knn_label1_accuracy))
-
-
-```
-```{r}
-
-########GHT##########
-
-k_near = vector("numeric", 10)                          
-Accuracy=vector("numeric", 10)                    
-for (i in 1:20)
-  { 
-    knn_label2 =  knn(train = train_label2[,-1], test = test_label2[,-1], cl = as.factor(train_label2$label), k = i)
-    Accuracy[i] = 100 * (mean(test_label2$label == knn_label2))
-    k_near[i]=i  
-    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
-}
-
-opt_k_label2 = k_near[which.max(Accuracy)]
-opt_k_label2
-
-plot(k_near,(100-Accuracy),
-       xlab = "k", ylab = "Classification Error", type = "b",
-       pch = 19, col = "darkorange")
-
-
-knn_label2_opt = knn(train = train_label2[,-1], test = test_label2[,-1], 
-                   cl = as.factor(train_label2$label), k = opt_k_label2)
-knn_label2_accuracy = round(accuracy(test_label2$label, knn_label2_opt),4)
-print(paste("The accuracy through KNN with optimal k is:",knn_label2_accuracy))
-
-
-```
-```{r}
-
-########DUR##########
-
-k_near = vector("numeric", 10)                          
-Accuracy=vector("numeric", 10)                    
-for (i in 1:20)
-  { 
-    knn_label3 =  knn(train = train_label3[,-1], test = test_label3[,-1], cl = as.factor(train_label3$label), k = i)
-    Accuracy[i] = 100 * (mean(test_label3$label == knn_label3))
-    k_near[i]=i  
-    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
-}
-
-opt_k_label3 = k_near[which.max(Accuracy)]
-opt_k_label3
-
-plot(k_near,(100-Accuracy),
-       xlab = "k", ylab = "Classification Error", type = "b",
-       pch = 19, col = "darkorange")
-
-
-knn_label3_opt = knn(train = train_label3[,-1], test = test_label3[,-1], 
-                   cl = as.factor(train_label3$label), k = opt_k_label3)
-knn_label3_accuracy = round(accuracy(test_label3$label, knn_label3_opt),4)
-print(paste("The accuracy through KNN with optimal k is:",knn_label3_accuracy))
-
-
-```
+##################################################################################################################################################################
 
 ## KNN LABEL WISE -- LEVEL 2--- USING CV
 
@@ -943,7 +743,7 @@ table(pred_knn_label3_cv, test_label3[,1])
 knn_accuracy_label3_cv = round(accuracy(test_label3[,1], pred_knn_label3_cv),4)
 print(paste("The accuracy through KNN for org label 1 model using cv is:",knn_accuracy_label3_cv))
 ```
-
+##################################################################################################################################################################
 
 ## PREP PCA DATA FOR COMBINED LABLES
 
@@ -997,7 +797,7 @@ names(test_pca_combined)[names(test_pca_combined) == 'test_pca_combined$label'] 
 
 
 ```
-
+##################################################################################################################################################################
 
 ##KNN FOR PCA COMBINED DATA -- LEVEL 1
 
@@ -1053,7 +853,7 @@ knn_accuracy_combined_pca_cv = round(accuracy(test_pca_combined[,1], pred_knn_co
 print(paste("The accuracy through KNN for combined PCA model using cv is:",knn_accuracy_combined_pca_cv))
 
 ```
-
+##################################################################################################################################################################
 
 ## DATA PREP FOR COMBINED PCA LABELS SEPERATELY -- LEVEL 2
 
