@@ -1,0 +1,1350 @@
+---
+title: "Project"
+author: "Anushree Vilas Pimpalkar"
+date: "11/19/2021"
+output: pdf_document
+---
+
+```{r}
+train = read.csv("sign_mnist_train.csv")
+test = read.csv("sign_mnist_test.csv")
+
+dim(train)
+dim(test)
+
+#training data
+X_train = train[,-1]
+Y_train = train[,1]
+
+#testing data
+X_test = test[,-1]
+Y_test = test[,1]
+
+```
+```{r}
+sum(is.na(train$label))
+sum(is.na(test$label))
+```
+
+```{r}
+sum(is.na(train))
+```
+
+```{r}
+
+# visualize the digits
+par(mfcol=c(3,3))
+par(mar=c(0, 0, 3, 0), xaxs='i', yaxs='i')
+
+#For the 1st 9 Images
+
+for (i in 1:9){
+  im=matrix((train[i,2:ncol(train)]), nrow=28, ncol=28) 
+im_numbers = apply(im, 2, as.numeric)
+image(1:28, 1:28, im_numbers, col=gray((0:255)/255))
+}
+#im=matrix((train[1,2:ncol(train)]), nrow=28, ncol=28) 
+#im_numbers = apply(im, 2, as.numeric)
+#image(1:28, 1:28, im_numbers, col=gray((0:255)/255))
+```
+
+
+
+```{r}
+str(X_train) #check if categorical variable, since PCA to be applied only on numeric data
+
+#PCA
+train.pca = prcomp(train[,-1], center = TRUE, scale. = TRUE)
+pca_summary = summary(train.pca)
+#pca_summary
+#pca_summary$importance[,1:200]
+#names(train.pca)
+
+#center and scale refers to respective mean and standard deviation of the variables that are used for normalization prior to implementing PCA
+
+#The rotation measure provides the principal component loading. Each column of rotation matrix contains the principal component loading vector. This is the most important measure we should be interested in.
+
+#In a data set, the maximum number of principal component loadings is a minimum of (n-1, p).
+
+```
+
+* The first 100 PCs explain more than 94% of the total variation.
+
+```{r}
+
+#In order to compute the principal component score vector, we don’t need to multiply the loading with data. Rather, the matrix x has the principal component score vectors
+dim(train.pca$x)
+
+#Let’s plot the resultant principal components.
+biplot(train.pca, scale = 0) #The parameter scale = 0 ensures that arrows are scaled to represent the loadings.
+
+
+var_explained = train.pca$sdev^2 / sum(train.pca$sdev^2)
+
+
+#create scree plot
+library(ggplot2)
+
+qplot(c(1:784), var_explained) + 
+  geom_line() + 
+  xlab("Principal Component") + 
+  ylab("Variance Explained") +
+  ggtitle("Scree Plot") +
+  ylim(0, 1)
+
+plot(var_explained, xlab = "Principal Component",
+             ylab = "Proportion of Variance Explained",
+             type = "b")
+
+# Cumulative plot
+qplot(c(1:784), cumsum(var_explained)) + 
+  geom_line() + 
+  xlab("Principal Component") + 
+  ylab(NULL) + 
+  ggtitle("Cumulative Scree Plot") +
+  ylim(0,1)
+
+plot(cumsum(var_explained), xlab = "Principal Component",
+              ylab = "Cumulative Proportion of Variance Explained",
+              type = "b", col = "darkorange")
+abline(v = 100, col = "darkgreen")
+
+```
+##Predictive Modeling with PCA Components
+
+After we’ve performed PCA on training set, let’s now understand the process of predicting on test data using these components. The process is simple. Just like we’ve obtained PCA components on training set, we’ll get another bunch of components on testing set. Finally, we train the model.
+
+Few important points to understand:
+
+We should not combine the train and test set to obtain PCA components of whole data at once. Because, this would violate the entire assumption of generalization since test data would get ‘leaked’ into the training set. In other words, the test data set would no longer remain ‘unseen’. Eventually, this will hammer down the generalization capability of the model.
+We should not perform PCA on test and train data sets separately. Because, the resultant vectors from train and test PCAs will have different directions ( due to unequal variance). Due to this, we’ll end up comparing data registered on different axes. Therefore, the resulting vectors from train and test data should have same axes.
+
+We should do exactly the same transformation to the test set as we did to training set, including the center and scaling feature.
+
+```{r}
+
+new_train = data.frame(Y_train, train.pca$x)
+names(new_train)[names(new_train) == 'Y_train'] = 'label'
+#we are interested in first 100 PCAs
+train_pca = new_train[,1:101]
+
+
+#transform test into PCA # Predicting PC in test dataset
+
+new_test = predict(train.pca, newdata = test[,-1])
+new_test = data.frame(Y_test,new_test)
+names(new_test)[names(new_test) == 'Y_test'] = 'label'
+test_pca = new_test[,1:101]
+
+
+```
+
+#DECISION TREE
+```{r}
+set.seed(1)
+
+library(rpart)
+
+#By default, the rpart function uses a 10-fold cross-validation. This can be controlled using the rpart.control() function and specify the xval argument. 
+
+#set 5 fold cross validation
+folds = rpart.control(xval = 5)
+
+rpart.fit = rpart(as.factor(train_pca$label) ~ ., method = "class", data = train_pca, control = folds)
+printcp(rpart.fit)
+#rpart.fit$cptable
+#summary(rpart.fit)
+
+rpart.fit$variable.importance
+#The tree that gives the smallest cross-validation error is the one with 12 splits and 13 terminal nodes.
+
+```
+
+
+```{r}
+
+################################################################################
+#Tuning a Tree Model
+################################################################################
+
+#Tree tuning is essentially about when to stop splitting.
+
+#use the 1sd rule
+cptarg = sqrt(rpart.fit$cptable[10,1]*rpart.fit$cptable[9,1])
+cptarg
+
+#obtain the tree corresponding to above `cp` value
+prunedtree = prune(rpart.fit,cp=cptarg) #prunedtree
+
+#plot the tree corresponding to above `cp` value
+library(rpart.plot)
+rpart.plot(prunedtree)
+
+################################################################################
+
+#All boxes will be white (the box.palette argument will be ignored) because
+#the number of classes in the response 24 is greater than length(box.palette) 6.
+#To silence this warning use box.palette=0 or trace=-1.
+
+rpart.plot(rpart.fit, trace = -1)
+plotcp(rpart.fit)
+
+plot(rpart.fit, uniform = TRUE, main = "Classification Tree for Sign Language Digit Recognition ")
+text(rpart.fit, all = TRUE, cex = 0.8)
+
+```
+
+```{r}
+
+rpart.prediction = predict(rpart.fit, newdata = test_pca, type = "class")
+#rpart.prediction
+tree_table = table(`Actual Class` = as.factor(test_pca$label), `Predicted Class` = rpart.prediction)
+tree_table
+
+accuracy = function(actual, predicted) 
+{
+  mean(actual == predicted)
+}
+
+tree_accuracy = round(accuracy(test_pca$label, rpart.prediction),4)
+print(paste("The accuracy through Decision trees is:",tree_accuracy))
+```
+
+
+
+
+```{r}
+library("devtools")
+#install_github("davpinto/fastknn")
+library(stats)     # dependancy fulfilment for dplyr and plotly packages
+library(dplyr) 
+library(forcats)     # for "fct_reorder" function
+library(graphics)     # dependancy fulfilment for plotly package
+library(ggplot2)
+library(ggthemes)
+library(plotly)
+library(vcd)
+library(lattice)     # dependancy fulfilment for caret package
+library(caret)     # for "preProcess" function
+library(C50)    
+library(fastknn)
+library(class)
+```
+
+#KNN
+
+##KNN - ORIGINAL FULL DATA
+```{r}
+
+k_near = vector("numeric", 10)                          # declaration to initiate for loop
+Accuracy=vector("numeric", 10)                    # declaration to initiate for loop
+for (i in 1:10)
+  { 
+    knn.mod =  knn(train = train[,-1], test = test[,-1], cl = as.factor(train$label), k = i)
+    Accuracy[i] = 100 * (mean(test$label == knn.mod))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+
+opt_full_k = k_near[which.max(Accuracy)]
+opt_full_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_full_opt = knn(train = train[,-1], test = test[,-1], 
+                   cl = as.factor(train$label), k = opt_full_k)
+knn_full_accuracy_opt = round(accuracy(test$label, knn_full_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_full_accuracy_opt))
+
+
+```
+##KNN ORIGINAL FULL DATA -- CV
+```{r}
+
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_full = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = X_train, "y" = as.factor(Y_train)),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_full$results$k, 1-knn.cvfit_full$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+```
+```{r}
+pred_knn_full_cv = knn(train = X_train, test = X_test, cl = as.factor(Y_train), k = 1)
+table(pred_knn_full_cv, Y_test)
+```
+
+```{r}
+accuracy = function(actual, predicted) 
+{
+  mean(actual == predicted)
+}
+
+knn_accuracy_full_cv = round(accuracy(Y_test, pred_knn_full_cv),4)
+print(paste("The accuracy through KNN for full model using cv is:",knn_accuracy_full_cv))
+
+```
+
+
+
+##KNN PCA
+```{r}
+
+library(caret)
+library(class)
+
+knn.fit = knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = 8)
+summary(knn.fit)
+
+accuracy = function(actual, predicted) 
+{
+  mean(actual == predicted)
+}
+
+predicted = knn.fit
+actual = Y_test
+
+knn_accuracy = round(accuracy(test_pca$label, knn.fit),4)
+print(paste("The accuracy through KNN with k = 8 is:",knn_accuracy))
+
+
+k_near = vector("numeric", 10)                          # declaration to initiate for loop
+Accuracy=vector("numeric", 10)                    # declaration to initiate for loop
+for (i in 1:10)
+  { 
+    knn.mod =  knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = i)
+    Accuracy[i] = 100 * (mean(test_pca$label == knn.mod))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+opt_k = k_near[which.max(Accuracy)]
+opt_k
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+```
+
+```{r}
+
+knn.fit_new = knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca$label), k = opt_k)
+knn_accuracy_new = round(accuracy(Y_test, knn.fit_new),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_accuracy_new))
+
+```
+
+
+##KNN PCA DATA -- CV
+
+```{r}
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_pca = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_pca[,-1], "y" = as.factor(train_pca[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_pca$results$k, 1-knn.cvfit_pca$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+```
+
+```{r}
+pred_knn_pca_cv = knn(train = train_pca[,-1], test = test_pca[,-1], cl = as.factor(train_pca[,1]), k = 1)
+cnf_pca = table(pred_knn_pca_cv, test_pca[,1])
+cnf_pca
+```
+
+```{r}
+knn_accuracy_pca_cv = round(accuracy(test_pca[,1], pred_knn_pca_cv),6)
+print(paste("The accuracy through KNN for PCA model using cv is:",knn_accuracy_pca_cv))
+```
+
+```{r}
+##misclassification rate knn pca
+
+mis = rep(1,24)
+names(mis) <- levels(train$label)
+for(i in 1:24){
+  mis[i]=(sum(cnf_pca[,i])-cnf_pca[i,i])/sum(cnf_pca[,i])
+}
+
+rf_misclassication = mis
+print((rf_misclassication*100))
+```
+
+
+
+##FNN:KNN
+```{r}
+
+library(FNN)
+fnn.fit = FNN::knn(new_train, new_test, cl = as.factor(Y_train), k = 8, algorithm = c("cover_tree"))
+
+fnn_accuracy = round(accuracy(Y_test, fnn.fit),4)
+print(paste("The accuracy through KNN with k = 8 is:",fnn_accuracy))
+
+```
+
+##Feature engineering using fastknn
+
+
+fastknn generates k * c new features, where c is the number of class labels. The new features are computed from the distances between the observations and their k nearest neighbors inside each class, as follows:
+
+First test feature contains the distances between each test instance and its nearest neighbor inside the first class.
+Second test feature contains the sums of distances between each test instance and its 2 nearest neighbors inside the first class.
+Third test feature contains the sums of distances between each test instance and its 3 nearest neighbors inside the first class.
+And so on.
+
+
+Repeat it for each class to generate the k * c new features. For the new training set, a n-fold CV approach is used to avoid overfitting.
+
+
+
+##FKNN DECISION TREES
+
+```{r}
+
+
+fknn_model = knnExtract(data.matrix(new_train[, -1]), as.factor(new_train[, 1]), data.matrix(new_test[, -1]), k = 8)
+
+dim(fknn_model$new.tr)
+dim(fknn_model$new.te)
+
+newtr = preProcess(fknn_model$new.tr, method = c("pca"))
+newtr_predicted = predict(newtr, fknn_model$new.tr)
+newtr_predicted = as.data.frame(newtr_predicted)
+newtr_predicted = cbind(label = new_train$label, newtr_predicted)
+dim(newtr_predicted)
+
+newte = preProcess(fknn_model$new.te, method = c("pca"))
+newte_predicted = predict(newtr, fknn_model$new.te)
+newte_predicted = as.data.frame(newte_predicted)
+newte_predicted = cbind(label = new_test$label, newte_predicted)
+dim(newte_predicted)
+
+################################################################################
+#C5.0 Decision Trees
+################################################################################
+
+tree_model = C5.0(x = newtr_predicted[, -1], y = as.factor(newtr_predicted[, 1]), trials = 20, control = C5.0Control(noGlobalPruning = FALSE, CF = 0.15, minCases = 3, winnow = FALSE, earlyStopping = TRUE))
+
+tree_model_predictions = predict(tree_model, newte_predicted[, -1], type = "class")
+
+table(tree_model_predictions, newte_predicted[,1])
+
+fknn_accuracy = round(accuracy(newte_predicted[,1], tree_model_predictions),4)
+print(paste("The accuracy through FKNN with k = 8 is:",fknn_accuracy))
+
+```
+
+
+## SVM
+
+```{r}
+library(e1071)
+```
+
+```{r}
+cost = c(100,1000,10000)
+gamma = c(0.00001, 0.0001, 0.001)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    gamma_0 = gamma[j]
+    svm.fit_radial_original = svm(train[,-1],  as.factor(train$label), kernel="radial", cost=cost_0, gamma = gamma_0)
+    pred = predict(svm.fit_radial_original, test[,-1])
+    Accuracy = 100 * (mean(test$label == pred))
+    print(paste("cost:", cost_0))
+    print(paste("gamma:", gamma_0))
+    print(paste("Accuracy:", Accuracy))
+  }
+}
+```
+
+
+##SVM LINEAR PCA
+```{r}
+cost = c(100,1000,10000)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    svm.fit_linear_PCA = svm(as.factor(train_pca$label)~., data = train_pca, kernel="linear", cost=cost_0)
+    pred_linear_PCA = predict(svm.fit_linear_PCA, test_pca[,-1])
+    Accuracy = 100 * (mean(test_pca$label == pred_linear_PCA))
+    print(paste("cost:", cost_0))
+    print(paste("SVM Accuracy PCA:", Accuracy))
+  }
+}
+```
+
+```{r}
+svm.fit_linear_PCA = svm(as.factor(train_pca$label)~., data = train_pca, kernel="linear", cost=100)
+pred_svm_linear = predict(svm.fit_linear_PCA, test_pca[,-1])
+cnf_svm_linear = table(pred_svm_linear, test_pca[,1])
+cnf_svm_linear
+```
+```{r}
+Accuracy = 100 * (mean(test_pca$label == pred_svm_linear))
+Accuracy
+```
+
+```{r}
+##misclassification rate svm linear pca
+
+mis = rep(1,24)
+names(mis) <- levels(train$label)
+for(i in 1:24){
+  mis[i]=(sum(cnf_svm_linear[,i])-cnf_svm_linear[i,i])/sum(cnf_svm_linear[,i])
+}
+
+rf_misclassication = mis
+print((rf_misclassication*100))
+```
+
+##SVM RADIAL PCA
+
+```{r}
+cost = c(100,1000,10000)
+gamma = c(0.00001, 0.0001, 0.001)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    gamma_0 = gamma[j]
+    svm.fit_radial = svm(train_pca[,-1],  as.factor(train_pca$label), kernel="radial", cost=cost_0, gamma = gamma_0)
+    pred = predict(svm.fit_radial, test_pca[,-1])
+    Accuracy = 100 * (mean(test_pca$label == pred))
+    print(paste("cost:", cost_0))
+    print(paste("gamma:", gamma_0))
+    print(paste("Accuracy:", Accuracy))
+  }
+}
+```
+
+```{r}
+svm.fit_radial_PCA = svm(train_pca[,-1],  as.factor(train_pca$label), kernel="radial", cost=1000, gamma = 0.001)
+pred_svm_radial = predict(svm.fit_radial_PCA, test_pca[,-1])
+cnf_svm_radial = table(pred_svm_radial, test_pca[,1])
+```
+
+```{r}
+##misclassification rate svm radial pca
+
+mis = rep(1,24)
+names(mis) <- levels(train$label)
+for(i in 1:24){
+  mis[i]=(sum(cnf_svm_radial[,i])-cnf_svm_radial[i,i])/sum(cnf_svm_radial[,i])
+}
+
+rf_misclassication = mis
+print((rf_misclassication*100))
+```
+
+
+
+## NEW APPROACH START 
+
+```{r}
+# Remapping of labels from discontinuous numbers 0-24 (9 missing) to A-Z (without J and Z)
+train$label = as.factor(train$label)
+test$label = as.factor(test$label)
+
+levels(train$label) = list(
+    A = "0", B = "1", C = "2", D = "3", E = "4", F = "5", G = "6", H = "7", I = "8", K = "10", L = "11",
+    M = "12",N = "13", O = "14",P = "15",Q = "16",R = "17",S = "18",T = "19", U = "20",V = "21", W = "22",X = "23", Y = "24")
+
+levels(test$label) = list(
+    A = "0", B = "1", C = "2", D = "3", E = "4", F = "5", G = "6", H = "7", I = "8", K = "10", L = "11",
+    M = "12",N = "13", O = "14",P = "15",Q = "16",R = "17",S = "18",T = "19", U = "20",V = "21", W = "22",X = "23", Y = "24") 
+```
+
+```{r}
+library(dplyr, warn.conflicts = FALSE)
+library(forcats)
+
+train_combined_labels=train[,2:785]
+glimpse(train$label)
+
+train_combined_labels$label <- fct_collapse(train$label, AEMNS = c("A","E","M","N","S"))
+train_combined_labels$label <- fct_collapse(train_combined_labels$label, GHT = c("G","H","T"))
+train_combined_labels$label <- fct_collapse(train_combined_labels$label, DRU = c( "D","U","R"))
+glimpse(train_combined_labels$label)
+
+train_combined = cbind(train_combined_labels$label, train_combined_labels[,1:784])
+names(train_combined)[names(train_combined) == 'train_combined_labels$label'] = 'label'
+
+```
+
+```{r}
+str(train_combined_labels$label)
+```
+```{r}
+
+test_combined_labels=test[,2:785]
+glimpse(test$label)
+test_combined_labels$label <- fct_collapse(test$label, AEMNS = c("A","E","M","N","S"))
+test_combined_labels$label <- fct_collapse(test_combined_labels$label, GHT = c("G","H","T"))
+test_combined_labels$label <- fct_collapse(test_combined_labels$label, DRU = c( "D","U","R"))
+glimpse(test_combined_labels$label)
+
+test_combined = cbind(test_combined_labels$label, test_combined_labels[,1:784])
+names(test_combined)[names(test_combined) == 'test_combined_labels$label'] = 'label'
+
+```
+
+```{r}
+levels(train_combined_labels$label)
+levels(test_combined_labels$label)
+```
+
+## KNN ON COMBINED DATA - LEVEL 1
+
+```{r}
+
+k_near = vector("numeric", 10)                          # declaration to initiate for loop
+Accuracy=vector("numeric", 10)                    # declaration to initiate for loop
+for (i in 1:10)
+  { 
+    knn.mod =  knn(train = train_combined[,-1], test = test_combined[,-1], cl = as.factor(train_combined$label), k = i)
+    Accuracy[i] = 100 * (mean(test_combined$label == knn.mod))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+opt_k = k_near[which.max(Accuracy)]
+
+opt_full_k = k_near[which.max(Accuracy)]
+opt_full_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_full_opt = knn(train = train_combined[,-1], test = test_combined[,-1], 
+                   cl = as.factor(train_combined$label), k = opt_k)
+knn_full_accuracy_opt = round(accuracy(test_combined$label, knn_full_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_full_accuracy_opt))
+
+table(test_combined$lab, knn_full_opt)
+
+```
+
+## KNN ON COMBINED DATA USING CV - LEVEL 1
+```{r}
+
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_combined_org = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_combined[,-1], "y" = as.factor(train_combined[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_combined_org$results$k, 1-knn.cvfit_combined_org$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+```
+```{r}
+pred_knn_combined_org_cv = knn(train = train_combined[,-1], test = test_combined[,-1], cl = as.factor(train_combined[,1]), k = 1)
+table(pred_knn_combined_org_cv, test_combined[,1])
+
+```
+
+```{r}
+knn_accuracy_combined_org_cv = round(accuracy(test_combined[,1], pred_knn_combined_org_cv),4)
+print(paste("The accuracy through KNN for combined data full model using cv is:",knn_accuracy_combined_org_cv))
+```
+
+### SVM LINEAR ON COMBINED DATA ---- LEVEL 1
+```{r}
+cost = c(1, 10, 100)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    svm.fit_linear = svm(as.factor(train_combined$label)~., data = train_combined, kernel="linear", cost=cost_0)
+    pred_linear = predict(svm.fit_linear, test_combined[,-1])
+    Accuracy = 100 * (mean(test_combined$label == pred_linear))
+    print(paste("cost:", cost_0))
+    print(paste("Accuracy:", Accuracy))
+  }
+}
+
+```
+
+
+## SVM RADIAL ON COMBINED DATA ---- LEVEL 1
+
+```{r}
+cost = c(100,1000,10000)
+gamma = c(0.00001, 0.0001, 0.001)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    gamma_0 = gamma[j]
+    svm.fit = svm(train_combined[,-1],  as.factor(train_combined$label), kernel="radial", cost=cost_0, gamma = gamma_0)
+    pred = predict(svm.fit, test_combined[,-1])
+    Accuracy = 100 * (mean(test_combined$label == pred))
+    print(paste("cost:", cost_0))
+    print(paste("gamma:", gamma_0))
+    print(paste("Accuracy:", Accuracy))
+  }
+}
+```
+
+## SVM LINEAR ON COMBINED DATA -- LEVEL 1
+
+```{r}
+library(kernlab)
+library(caret)
+library(e1071)
+
+cost = c(1, 10, 100)
+
+for (i in 1:length(cost))
+{
+  for (j in 1:length(gamma))
+  {
+    cost_0 = cost[i]
+    svm.fit_linear = svm(as.factor(train_combined$label)~., data = train_combined, kernel="linear", cost=cost_0)
+    pred_linear = predict(svm.fit_linear, test_combined[,-1])
+    Accuracy = 100 * (mean(test_combined$label == pred_linear))
+    print(paste("cost:", cost_0))
+    print(paste("Accuracy:", Accuracy))
+  }
+}
+
+
+```
+
+
+
+## DATA PREP FOR COMBINED LABELS SEPERATELY -- LEVEL 2
+
+```{r}
+
+train_label1 = subset(train,train$label %in% c("A","E","M","N","S"))
+train_label1$label = as.character(train_label1$label)
+train_label1$label = as.factor(train_label1$label)
+test_label1 = subset(test,test$label %in% c("A","E","M","N","S"))
+test_label1$label = as.character(test_label1$label)
+test_label1$label = as.factor(test_label1$label)
+
+train_label2 = subset(train,train$label %in% c("G", "H", "T"))
+train_label2$label = as.character(train_label2$label)
+train_label2$label = as.factor(train_label2$label)
+test_label2 = subset(test,test$label %in% c("G", "H", "T"))
+test_label2$label = as.character(test_label2$label)
+test_label2$label = as.factor(test_label2$label)
+
+train_label3 = subset(train,train$label %in% c("D", "U", "R"))
+train_label3$label = as.character(train_label3$label)
+train_label3$label = as.factor(train_label3$label)
+test_label3 = subset(test,test$label %in% c("D", "U", "R"))
+test_label3$label = as.character(test_label3$label)
+test_label3$label = as.factor(test_label3$label)
+
+
+```
+
+##KNN ON COMBINED - LEVEL 2
+
+```{r}
+
+########AEMNS##########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)
+
+for (i in 1:20)
+  { 
+    knn_label1 =  knn(train = train_label1[,-1], test = test_label1[,-1], cl = as.factor(train_label1$label), k = i)
+    Accuracy[i] = 100 * (mean(test_label1$label == knn_label1))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
+}
+
+opt_k_label1 = k_near[which.max(Accuracy)]
+opt_k_label1
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label1_opt = knn(train = train_label1[,-1], test = test_label1[,-1], 
+                   cl = as.factor(train_label1$label), k = opt_k_label1)
+knn_label1_accuracy = round(accuracy(test_label1$label, knn_label1_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label1_accuracy))
+
+
+```
+```{r}
+
+########GHT##########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                    
+for (i in 1:20)
+  { 
+    knn_label2 =  knn(train = train_label2[,-1], test = test_label2[,-1], cl = as.factor(train_label2$label), k = i)
+    Accuracy[i] = 100 * (mean(test_label2$label == knn_label2))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
+}
+
+opt_k_label2 = k_near[which.max(Accuracy)]
+opt_k_label2
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label2_opt = knn(train = train_label2[,-1], test = test_label2[,-1], 
+                   cl = as.factor(train_label2$label), k = opt_k_label2)
+knn_label2_accuracy = round(accuracy(test_label2$label, knn_label2_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label2_accuracy))
+
+
+```
+```{r}
+
+########DUR##########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                    
+for (i in 1:20)
+  { 
+    knn_label3 =  knn(train = train_label3[,-1], test = test_label3[,-1], cl = as.factor(train_label3$label), k = i)
+    Accuracy[i] = 100 * (mean(test_label3$label == knn_label3))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n') # to print % accuracy 
+}
+
+opt_k_label3 = k_near[which.max(Accuracy)]
+opt_k_label3
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label3_opt = knn(train = train_label3[,-1], test = test_label3[,-1], 
+                   cl = as.factor(train_label3$label), k = opt_k_label3)
+knn_label3_accuracy = round(accuracy(test_label3$label, knn_label3_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label3_accuracy))
+
+
+```
+
+## KNN LABEL WISE -- LEVEL 2--- USING CV
+
+```{r}
+##AEMNS
+
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_label1 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_label1[,-1], "y" = as.factor(train_label1$label)),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_label1$results$k, 1-knn.cvfit_label1$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+```
+```{r}
+pred_knn_label1_cv = knn(train = train_label1[,-1], test = test_label1[,-1], cl = as.factor(train_label1[,1]), k = 1)
+table(pred_knn_label1_cv, test_label1[,1])
+```
+
+```{r}
+knn_accuracy_label1_cv = round(accuracy(test_label1[,1], pred_knn_label1_cv),4)
+print(paste("The accuracy through KNN for org label 1 model using cv is:",knn_accuracy_label1_cv))
+```
+
+
+```{r}
+##GHT
+
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_label2 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_label2[,-1], "y" = as.factor(train_label2$label)),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_label2$results$k, 1-knn.cvfit_label2$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+
+```
+
+```{r}
+pred_knn_label2_cv = knn(train = train_label2[,-1], test = test_label2[,-1], cl = as.factor(train_label2[,1]), k = 1)
+table(pred_knn_label2_cv, test_label2[,1])
+```
+
+```{r}
+knn_accuracy_label2_cv = round(accuracy(test_label2[,1], pred_knn_label2_cv),4)
+print(paste("The accuracy through KNN for org label 1 model using cv is:",knn_accuracy_label2_cv))
+```
+
+
+```{r}
+##DUR
+
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_label3 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_label3[,-1], "y" = as.factor(train_label3$label)),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_label3$results$k, 1-knn.cvfit_label3$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+```
+```{r}
+pred_knn_label3_cv = knn(train = train_label3[,-1], test = test_label3[,-1], cl = as.factor(train_label3[,1]), k = 1)
+table(pred_knn_label3_cv, test_label3[,1])
+```
+
+```{r}
+knn_accuracy_label3_cv = round(accuracy(test_label3[,1], pred_knn_label3_cv),4)
+print(paste("The accuracy through KNN for org label 1 model using cv is:",knn_accuracy_label3_cv))
+```
+
+
+## PREP PCA DATA FOR COMBINED LABLES
+
+```{r}
+# Remapping of labels from discontinuous numbers 0-24 (9 missing) to A-Z (without J and Z)
+train_pca$label = as.factor(train_pca$label)
+test_pca$label = as.factor(test_pca$label)
+
+levels(train_pca$label) = list(
+    A = "0", B = "1", C = "2", D = "3", E = "4", F = "5", G = "6", H = "7", I = "8", K = "10", L = "11",
+    M = "12",N = "13", O = "14",P = "15",Q = "16",R = "17",S = "18",T = "19", U = "20",V = "21", W = "22",X = "23", Y = "24")
+
+levels(test_pca$label) = list(
+    A = "0", B = "1", C = "2", D = "3", E = "4", F = "5", G = "6", H = "7", I = "8", K = "10", L = "11",
+    M = "12",N = "13", O = "14",P = "15",Q = "16",R = "17",S = "18",T = "19", U = "20",V = "21", W = "22",X = "23", Y = "24") 
+
+```
+
+
+## PCA DATA PREP FOR LEVEL 1
+
+```{r}
+
+train_pca$label = as.factor(train_pca$label)
+train_pca_combined=train_pca[,2:101]
+glimpse(train_pca$label)
+
+train_pca_combined$label <- fct_collapse(train_pca$label, AEMNS = c("A","E","M","N","S"))
+train_pca_combined$label <- fct_collapse(train_pca_combined$label, GHT = c("G","H","T"))
+train_pca_combined$label <- fct_collapse(train_pca_combined$label, DRU = c( "D","U","R"))
+glimpse(train_pca_combined$label)
+
+train_pca_combined = cbind(train_pca_combined$label, train_pca_combined[,1:100])
+names(train_pca_combined)[names(train_pca_combined) == 'train_pca_combined$label'] = 'label'
+
+```
+
+```{r}
+
+test_pca$label = as.factor(test_pca$label)
+test_pca_combined=test_pca[,2:101]
+glimpse(test_pca$label)
+
+test_pca_combined$label <- fct_collapse(test_pca$label, AEMNS = c("A","E","M","N","S"))
+test_pca_combined$label <- fct_collapse(test_pca_combined$label, GHT = c("G","H","T"))
+test_pca_combined$label <- fct_collapse(test_pca_combined$label, DRU = c( "D","U","R"))
+glimpse(test_pca_combined$label)
+
+test_pca_combined = cbind(test_pca_combined$label, test_pca_combined[,1:100])
+names(test_pca_combined)[names(test_pca_combined) == 'test_pca_combined$label'] = 'label'
+
+
+```
+
+
+##KNN FOR PCA COMBINED DATA -- LEVEL 1
+
+```{r}
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                  
+for (i in 1:10)
+  { 
+    knn_combined_pca =  knn(train = train_pca_combined[,-1], test = test_pca_combined[,-1], cl = as.factor(train_pca_combined$label), k = i)
+    Accuracy[i] = 100 * (mean(test_pca_combined$label == knn_combined_pca))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+
+opt_combined_pca_k = k_near[which.max(Accuracy)]
+opt_combined_pca_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_combined_pca_opt = knn(train = train_pca_combined[,-1], test = test_pca_combined[,-1], 
+                   cl = as.factor(train_pca_combined$label), k = opt_combined_pca_k)
+knn_combined_pca_accuracy = round(accuracy(test_pca_combined$label, knn_combined_pca_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_combined_pca_accuracy))
+
+
+
+```
+### PCA COMBINED --- LEVEL 1 -- USING CV
+```{r}
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_combined_pca = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_pca_combined[,-1], "y" = as.factor(train_pca_combined[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_combined_pca$results$k, 1-knn.cvfit_combined_pca$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+```
+```{r}
+pred_knn_combined_pca_cv = knn(train = train_pca_combined[,-1], test = test_pca_combined[,-1], cl = as.factor(train_pca_combined[,1]), k = 1)
+table(pred_knn_combined_pca_cv, test_pca_combined[,1])
+```
+
+```{r}
+knn_accuracy_combined_pca_cv = round(accuracy(test_pca_combined[,1], pred_knn_combined_pca_cv),4)
+print(paste("The accuracy through KNN for combined PCA model using cv is:",knn_accuracy_combined_pca_cv))
+
+```
+
+
+## DATA PREP FOR COMBINED PCA LABELS SEPERATELY -- LEVEL 2
+
+```{r}
+
+train_pca_label1 = subset(train_pca,train_pca$label %in% c("A","E","M","N","S"))
+train_pca_label1$label = as.character(train_pca_label1$label)
+train_pca_label1$label = as.factor(train_pca_label1$label)
+test_pca_label1 = subset(test_pca,test_pca$label %in% c("A","E","M","N","S"))
+test_pca_label1$label = as.character(test_pca_label1$label)
+test_pca_label1$label = as.factor(test_pca_label1$label)
+
+train_pca_label2 = subset(train_pca,train_pca$label %in% c("G", "H", "T"))
+train_pca_label2$label = as.character(train_pca_label2$label)
+train_pca_label2$label = as.factor(train_pca_label2$label)
+test_pca_label2 = subset(test_pca,test_pca$label %in% c("G", "H", "T"))
+test_pca_label2$label = as.character(test_pca_label2$label)
+test_pca_label2$label = as.factor(test_pca_label2$label)
+
+train_pca_label3 = subset(train_pca,train_pca$label %in% c("D", "U", "R"))
+train_pca_label3$label = as.character(train_pca_label3$label)
+train_pca_label3$label = as.factor(train_pca_label3$label)
+test_pca_label3 = subset(test_pca,test_pca$label %in% c("D", "U", "R"))
+test_pca_label3$label = as.character(test_pca_label3$label)
+test_pca_label3$label = as.factor(test_pca_label3$label)
+
+
+```
+
+```{r}
+
+#######AEMNS -- PCA#########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                  
+for (i in 1:10)
+  { 
+    knn_label1_pca =  knn(train = train_pca_label1[,-1], test = test_pca_label1[,-1], cl = as.factor(train_pca_label1$label), k = i)
+    Accuracy[i] = 100 * (mean(test_pca_label1$label == knn_label1_pca))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+
+opt_combined_pca_k = k_near[which.max(Accuracy)]
+opt_combined_pca_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label1_pca_opt = knn(train = train_pca_label1[,-1], test = test_pca_label1[,-1], 
+                   cl = as.factor(train_pca_label1$label), k = opt_combined_pca_k)
+knn_label1_pca_accuracy = round(accuracy(test_pca_label1$label, knn_label1_pca_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label1_pca_accuracy))
+
+
+
+```
+
+```{r}
+
+#######GHT -- PCA#########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                  
+for (i in 1:10)
+  { 
+    knn_label2_pca =  knn(train = train_pca_label2[,-1], test = test_pca_label2[,-1], cl = as.factor(train_pca_label2$label), k = i)
+    Accuracy[i] = 100 * (mean(test_pca_label2$label == knn_label2_pca))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+
+opt_combined_pca_k = k_near[which.max(Accuracy)]
+opt_combined_pca_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label2_pca_opt = knn(train = train_pca_label2[,-1], test = test_pca_label2[,-1], 
+                   cl = as.factor(train_pca_label2$label), k = opt_combined_pca_k)
+knn_label2_pca_accuracy = round(accuracy(test_pca_label2$label, knn_label2_pca_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label2_pca_accuracy))
+
+
+
+```
+```{r}
+
+#######URD -- PCA#########
+
+k_near = vector("numeric", 10)                          
+Accuracy=vector("numeric", 10)                  
+for (i in 1:10)
+  { 
+    knn_label3_pca =  knn(train = train_pca_label3[,-1], test = test_pca_label3[,-1], cl = as.factor(train_pca_label3$label), k = i)
+    Accuracy[i] = 100 * (mean(test_pca_label3$label == knn_label3_pca))
+    k_near[i]=i  
+    cat(k_near[i],'=',Accuracy[i],'\n')       # to print % accuracy 
+}
+
+
+opt_combined_pca_k = k_near[which.max(Accuracy)]
+opt_combined_pca_k
+
+plot(k_near,(100-Accuracy),
+       xlab = "k", ylab = "Classification Error", type = "b",
+       pch = 19, col = "darkorange")
+
+
+knn_label3_pca_opt = knn(train = train_pca_label3[,-1], test = test_pca_label3[,-1], 
+                   cl = as.factor(train_pca_label3$label), k = opt_combined_pca_k)
+knn_label3_pca_accuracy = round(accuracy(test_pca_label3$label, knn_label3_pca_opt),4)
+print(paste("The accuracy through KNN with optimal k is:",knn_label3_pca_accuracy))
+
+
+
+
+```
+##KNN PCA COMBINED -- LEVEL 2 -- USING CV
+```{r}
+
+##AEMNS
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_combined_pca_label1 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_pca_label1[,-1], "y" = as.factor(train_pca_label1[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_combined_pca_label1$results$k, 1-knn.cvfit_combined_pca_label1$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+```
+```{r}
+
+pred_knn_pca_label1_cv = knn(train = train_pca_label1[,-1], test = test_pca_label1[,-1], cl = as.factor(train_pca_label1[,1]), k = 1)
+table(pred_knn_pca_label1_cv, test_pca_label1[,1])
+```
+
+```{r}
+knn_accuracy_pca_label1_cv = round(accuracy(test_pca_label1[,1], pred_knn_pca_label1_cv),4)
+print(paste("The accuracy through KNN for PCA label 1 model using cv is:",knn_accuracy_pca_label1_cv))
+
+```
+
+```{r}
+
+##GHT
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_combined_pca_label2 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_pca_label2[,-1], "y" = as.factor(train_pca_label2[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_combined_pca_label2$results$k, 1-knn.cvfit_combined_pca_label2$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+
+```
+```{r}
+
+pred_knn_pca_label2_cv = knn(train = train_pca_label2[,-1], test = test_pca_label2[,-1], cl = as.factor(train_pca_label2[,1]), k = 1)
+table(pred_knn_pca_label2_cv, test_pca_label2[,1])
+```
+```{r}
+knn_accuracy_pca_label2_cv = round(accuracy(test_pca_label2[,1], pred_knn_pca_label2_cv),4)
+print(paste("The accuracy through KNN for PCA label 2 model using cv is:",knn_accuracy_pca_label2_cv))
+```
+
+```{r}
+
+##URD
+control = trainControl(method = "cv", number = 4)
+set.seed(1)
+knn.cvfit_combined_pca_label3 = train(y ~ ., method = "knn", 
+                   data = data.frame("x" = train_pca_label3[,-1], "y" = as.factor(train_pca_label3[,1])),
+                   tuneGrid = data.frame(k = seq(1, 10, 1)),
+                   trControl = control)
+
+plot(knn.cvfit_combined_pca_label3$results$k, 1-knn.cvfit_combined_pca_label3$results$Accuracy,
+     xlab = "K", ylab = "Classification Error", type = "b",
+     pch = 19, col = "darkorange")
+
+
+```
+```{r}
+
+pred_knn_pca_label3_cv = knn(train = train_pca_label3[,-1], test = test_pca_label3[,-1], cl = as.factor(train_pca_label3[,1]), k = 1)
+table(pred_knn_pca_label3_cv, test_pca_label3[,1])
+```
+```{r}
+knn_accuracy_pca_label3_cv = round(accuracy(test_pca_label3[,1], pred_knn_pca_label3_cv),4)
+print(paste("The accuracy through KNN for PCA label 3 model using cv is:",knn_accuracy_pca_label3_cv))
+```
+
+
+
+```{r}
+#################Calculation on final accuracy###############################
+#Level 1
+Prediction = pred_knn_combined_org_cv
+Actual = test_combined$label
+
+a = data.frame(Prediction,Actual)
+
+a = subset(a,a$Actual != "AEMNS")
+a = subset(a,a$Actual != "GHT")
+a = subset(a,a$Actual != "DRU")
+
+level1_clean_df = a
+
+#Level 2 group1
+Prediction = pred_knn_label1_cv
+Actual = test_label1$label
+level2_gp1_clean_df = data.frame(Prediction, Actual)
+
+#Level 2 group2
+Prediction = pred_knn_label2_cv
+Actual = test_label2$label
+level2_gp2_clean_df = data.frame(Prediction, Actual)
+
+#Level 2 group3
+Prediction = pred_knn_label3_cv
+Actual = test_label3$label
+level2_gp3_clean_df = data.frame(Prediction, Actual)
+
+final_df = rbind(level1_clean_df,level2_gp1_clean_df,level2_gp2_clean_df,level2_gp3_clean_df)
+
+final_accuracy = mean(final_df$Prediction == final_df$Actual)
+final_cm = table(final_df$Prediction,final_df$Actual)
+print(paste("The final accuracy for combined data is :", final_accuracy))
+final_cm
+```
+
+
+```{r}
+#################Calculation on final accuracy###############################
+#Level 1
+Prediction = pred_knn_combined_pca_cv
+Actual = test_pca_combined$label
+
+a = data.frame(Prediction,Actual)
+
+a = subset(a,a$Actual != "AEMNS")
+a = subset(a,a$Actual != "GHT")
+a = subset(a,a$Actual != "DRU")
+
+level1_clean_pca_df = a
+
+#Level 2 group1
+Prediction = pred_knn_pca_label1_cv
+Actual = test_pca_label1$label
+level2_gp1_clean_pca_df = data.frame(Prediction, Actual)
+
+#Level 2 group2
+Prediction = pred_knn_pca_label2_cv
+Actual = test_pca_label2$label
+level2_gp2_clean_pca_df = data.frame(Prediction, Actual)
+
+#Level 2 group3
+Prediction = pred_knn_pca_label3_cv
+Actual = test_pca_label3$label
+level2_gp3_clean_pca_df = data.frame(Prediction, Actual)
+
+final_pca_df = rbind(level1_clean_pca_df,level2_gp1_clean_pca_df,level2_gp2_clean_pca_df,level2_gp3_clean_pca_df)
+
+final_accuracy_pca = mean(final_pca_df$Prediction == final_pca_df$Actual)
+final_cm_pca = table(final_pca_df$Prediction,final_pca_df$Actual)
+print(paste("The final accuracy for combined pca data is :", final_accuracy_pca))
+final_cm_pca
+```
+
+```{r}
+
+train.pca$x %>% 
+   as.data.frame %>%    ggplot(aes(x=PC1,y=PC2)) + geom_point(size=2, color ="darkblue") +     theme_bw(base_size=20) +      labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+           y=paste0("PC2: ",round(var_explained[2]*100,1),"%")) +
+    theme(legend.position="top")
+
+```
+
+```{r}
+head(train_pca)
+```
+
